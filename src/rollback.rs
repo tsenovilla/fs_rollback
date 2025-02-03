@@ -7,6 +7,7 @@ use std::{
 };
 use tempfile::NamedTempFile;
 
+/// Offers a mechanism to rollback fs operations with Rust
 #[derive(Debug)]
 pub struct Rollback {
 	// Keep the temp_files inside the rollback struct, so they live until the Rollback dissapears
