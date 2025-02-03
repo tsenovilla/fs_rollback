@@ -5,6 +5,7 @@ repository = "https://github.com/tsenovilla/fs_rollback"
 license = "GPL-3.0"
 rust-version = "1.84.0"
 edition = "2021"
+description = "This crate offers a rollback mechanism in Rust fs common operations"
 
 [dependencies]
 tempfile = "3.16.0"
