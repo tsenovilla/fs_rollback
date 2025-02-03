@@ -1,0 +1,11 @@
+[package]
+name = "fs_rollback"
+version = "1.0.0"
+repository = "https://github.com/tsenovilla/fs_rollback"
+license = "GPL-3.0"
+rust-version = "1.84.0"
+edition = "2021"
+
+[dependencies]
+tempfile = "3.16.0"
+thiserror = "2.0.11"
