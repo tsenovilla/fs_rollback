@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0
 
+#[cfg(test)]
+mod tests;
+
 use crate::Error;
 use std::path::{Path, PathBuf};
 use tempfile::NamedTempFile;
