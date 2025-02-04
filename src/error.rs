@@ -7,4 +7,6 @@ use thiserror::Error;
 pub enum Error {
 	#[error("IO error: {0}")]
 	IO(#[from] std::io::Error),
+	#[error("{0}")]
+	Descriptive(String),
 }

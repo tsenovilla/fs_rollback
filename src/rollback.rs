@@ -1,35 +1,66 @@
 // SPDX-License-Identifier: GPL-3.0
 
+mod backup;
+mod private_api;
+#[cfg(test)]
+mod tests;
+
 use crate::Error;
 use std::{
-	fs::File,
+	collections::HashMap,
 	path::{Path, PathBuf},
 };
 use tempfile::NamedTempFile;
 
-/// Offers a mechanism to rollback fs operations with Rust
+/// This struct offers a whole rollback mechanism for file system transactions. All operations
+/// carried out under the umbrella of a Rollback instance won't affect the fyle system until
+/// changes are committed.
+///
+/// If something goes wrong while committing, every change that has been
+/// already made to the file system will be rolled-back.
+///
+/// All uncommitted changes will be discarded as soon as the instance goes out of scope.
+///
+/// Rollback uses temporary files under the hood, where every desired change should be applied
+/// before committing.
+///
+/// The struct currently supports:
+///  
+/// - Modification of existing files.
+/// - Creation of new files.
+/// - Creation of new directories.
+///
+/// # Terminology
+///
+/// - A noted file is an existing file that has been included in the Rollback, with an associated
+/// temporary file which is originally a copy of it. Upon commit, the temporary file will override
+/// the noted file.
 #[derive(Debug)]
-pub struct Rollback {
+pub struct Rollback<'a> {
 	// Keep the temp_files inside the rollback struct, so they live until the Rollback dissapears
 	temp_files: Vec<NamedTempFile>,
-	// A tuple of PathBuf representing the paths to the temporary file and the original file
-	noted: Vec<(PathBuf, PathBuf)>,
-	// A registry of new_files
-	new_files: Vec<PathBuf>,
-	// A registry of new directories
-	new_dirs: Vec<PathBuf>,
+	// Maps original file paths to the temporary file path
+	noted: HashMap<&'a Path, PathBuf>,
+	// Maps original paths referring files that must be created with its corresponding temporary
+	// file
+	new_files: HashMap<&'a Path, PathBuf>,
+	// New dirs added
+	new_dirs: Vec<&'a Path>,
 }
 
-impl Rollback {
+impl<'a> Rollback<'a> {
+	/// Creates a new, empty instance
 	pub fn new() -> Self {
 		Self {
 			temp_files: Vec::new(),
-			noted: Vec::new(),
-			new_files: Vec::new(),
+			noted: HashMap::new(),
+			new_files: HashMap::new(),
 			new_dirs: Vec::new(),
 		}
 	}
 
+	/// Creates a new, empty instance with pre allocated memory for noted files, new files and new
+	/// directories.
 	pub fn with_capacity(
 		note_capacity: usize,
 		new_files_capacity: usize,
@@ -37,75 +68,99 @@ impl Rollback {
 	) -> Self {
 		Self {
 			temp_files: Vec::with_capacity(note_capacity),
-			noted: Vec::with_capacity(note_capacity),
-			new_files: Vec::with_capacity(new_files_capacity),
+			noted: HashMap::with_capacity(note_capacity),
+			new_files: HashMap::with_capacity(new_files_capacity),
 			new_dirs: Vec::with_capacity(new_dirs_capacity),
 		}
 	}
 
-	pub fn note_file(&mut self, original: &Path) -> Result<PathBuf, Error> {
+	/// Note an existing file.
+	/// ## Errors:
+	/// - If the temporary file cannot be created.
+	/// - If the temporary file cannot be writen.
+	pub fn note_file(&mut self, original: &'a Path) -> Result<(), Error> {
 		let temp_file = NamedTempFile::new()?;
-		std::fs::write(&temp_file, &std::fs::read_to_string(original)?)?;
-		let temp_file_path = temp_file.path().to_path_buf();
+		std::fs::copy(original, &temp_file)?;
+		self.noted.insert(original, temp_file.path().to_path_buf());
 		self.temp_files.push(temp_file);
-		self.noted.push((temp_file_path.clone(), original.to_path_buf()));
-		Ok(temp_file_path)
-	}
-
-	pub fn new_file(&mut self, file: &Path) -> Result<(), Error> {
-		File::create(file)?;
-		self.new_files.push(file.to_path_buf());
 		Ok(())
 	}
 
-	pub fn new_dir(&mut self, dir: &Path) -> Result<(), Error> {
-		std::fs::create_dir(dir)?;
-		self.new_dirs.push(dir.to_path_buf());
+	/// Creates a temporary file that will be committed to a new file in the specified path.
+	/// The actual new file isn't created until the instance is committed, so trying to access that
+	/// file before commit would lead to errors.
+	/// ## Errors:
+	/// - If the specified path already exists.
+	/// - If the temporary file cannot be created.
+	/// - If the temporary file cannot be writen.
+	pub fn new_file(&mut self, path: &'a Path) -> Result<(), Error> {
+		if path.exists() {
+			return Err(Error::Descriptive(format!("{:?} already exists", path)));
+		}
+		let temp_file = NamedTempFile::new()?;
+		self.new_files.insert(path, temp_file.path().to_path_buf());
+		self.temp_files.push(temp_file);
 		Ok(())
 	}
 
-	pub fn noted_files(&self) -> Vec<PathBuf> {
-		self.noted
-			.iter()
-			.map(|(_, original)| original.to_path_buf())
-			.collect::<Vec<_>>()
+	/// Keeps track of a directory that will be created in the specified path upon commit.
+	/// ## Errors:
+	/// - If the specified path already exists.
+	pub fn new_dir(&mut self, path: &'a Path) -> Result<(), Error> {
+		if path.exists() {
+			return Err(Error::Descriptive(format!("{:?} already exists", path)));
+		}
+		self.new_dirs.push(path);
+		Ok(())
 	}
 
-	pub fn new_files(&self) -> Vec<PathBuf> {
-		self.new_files.clone()
+	/// Get the temporary file associated to a noted file.
+	pub fn get_noted_file(&self, original: &Path) -> Option<&Path> {
+		self.noted.get(original).map(|temp_file| &**temp_file)
 	}
 
-	pub fn new_dirs(&self) -> Vec<PathBuf> {
-		self.new_dirs.clone()
+	/// Get the temporary file associated to a new file.
+	pub fn get_new_file(&self, path: &Path) -> Option<&Path> {
+		self.new_files.get(path).map(|temp_file| &**temp_file)
 	}
 
-	pub fn commit(self) {
-		self.noted.into_iter().for_each(|(temp, original)| {
-			std::fs::write(
-				original,
-				std::fs::read_to_string(temp)
-					.expect("The temp file exists as long as Self exists; qed"),
-			)
-			.expect("The original file exists; qed;")
-		});
-	}
+	/// Commit the changes and rollback everything in case of error.
+	/// Errors:
+	/// - If a noted file cannot be committed. This includes a wide range of possibilities: the
+	/// original file doesn't exist anymore, or the proccess doesn't have write permissions on
+	/// it,...
+	/// - If a new dir cannot be created.
+	/// - If a new file cannot be created.
+	pub fn commit(self) -> Result<(), Error> {
+		let mut backups = Vec::with_capacity(self.noted.capacity());
 
-	pub fn rollback(self) {
-		self.new_files.into_iter().for_each(|file| {
-			std::fs::remove_file(&file).expect("The file exists cause it's in the rollback; qed;")
-		});
-		self.new_dirs.into_iter().for_each(|dir| {
-			std::fs::remove_dir_all(&dir).expect("Thee dir exists cause it's in the rollback; qed;")
-		});
-	}
-
-	pub fn ok_or_rollback<S, E>(self, result: Result<S, E>) -> Result<(Self, S), E> {
-		match result {
-			Ok(result) => Ok((self, result)),
-			Err(err) => {
-				self.rollback();
-				Err(err)
+		match self.commit_noted_files(backups) {
+			Ok(computed_backups) => backups = computed_backups,
+			Err((err, backups)) => {
+				backups.iter().for_each(|backup| backup.rollback());
+				return Err(err);
 			},
 		}
+
+		match self.commit_new_dirs() {
+			Err(err) => {
+				backups.iter().for_each(|backup| backup.rollback());
+				self.rollback_new_dirs();
+				return Err(err);
+			},
+			_ => (),
+		}
+
+		match self.commit_new_files() {
+			Err(err) => {
+				backups.iter().for_each(|backup| backup.rollback());
+				self.rollback_new_files();
+				self.rollback_new_dirs();
+				return Err(err);
+			},
+			_ => (),
+		}
+
+		Ok(())
 	}
 }

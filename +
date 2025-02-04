@@ -1,0 +1,109 @@
+// SPDX-License-Identifier: GPL-3.0
+
+use crate::Error;
+use std::{
+	collections::HashMap,
+	fs::File,
+	path::{Path, PathBuf},
+};
+use tempfile::{NamedTempFile, TempDir};
+
+#[cfg(test)]
+mod tests;
+
+/// Offers a mechanism to rollback fs operations with Rust
+#[derive(Debug)]
+pub struct Rollback {
+	// Keep the temp_files inside the rollback struct, so they live until the Rollback dissapears
+	temp_files: Vec<NamedTempFile>,
+	// Keep the temp dirs in the rollback struct, so they livee until the Rollback dissapears
+	temp_dirs: Vec<TempDir>,
+	// A tuple of PathBuf representing the paths to the temporary file and the original file,
+	// indexed by a key
+	noted: HashMap<String, (PathBuf, PathBuf)>,
+	// A registry of new_files indexed by a key
+	new_files: HashMap<String, (PathBuf, PathBuf)>,
+	// A registry of new directories indexed by a key
+	new_dirs: HashMap<String, (PathBuf, PathBuf)>,
+}
+
+impl Rollback {
+	pub fn new() -> Self {
+		Self {
+			temp_files: Vec::new(),
+			temp_dirs: Vec::new(),
+			noted: HashMap::new(),
+			new_files: HashMap::new(),
+			new_dirs: HashMap::new(),
+		}
+	}
+
+	pub fn with_capacity(
+		note_capacity: usize,
+		new_files_capacity: usize,
+		new_dirs_capacity: usize,
+	) -> Self {
+		Self {
+			temp_files: Vec::with_capacity(note_capacity),
+			temp_dirs: Vec::with_capacity(new_dirs_capacity),
+			noted: HashMap::with_capacity(note_capacity),
+			new_files: HashMap::with_capacity(new_files_capacity),
+			new_dirs: HashMap::with_capacity(new_dirs_capacity),
+		}
+	}
+
+	pub fn note_file<P: AsRef<Path>>(&mut self, key: &str, original: P) -> Result<PathBuf, Error> {
+		let temp_file = NamedTempFile::new()?;
+		let original = original.as_ref();
+		std::fs::write(&temp_file, std::fs::read_to_string(original)?)
+            .expect("The temp_file has been created by note_file, so it exists and should be writable in the temp file associated dir; qed;");
+
+		let temp_file_path = temp_file.path().to_path_buf();
+		self.temp_files.push(temp_file);
+		self.noted
+			.insert(key.to_owned(), (temp_file_path.clone(), original.to_path_buf()));
+		Ok(temp_file_path)
+	}
+
+	pub fn new_file<P: AsRef<Path>>(&mut self, key: &str, path: P) -> Result<PathBuf, Error> {
+		let temp_file = NamedTempFile::new()?;
+		let temp_file_path = temp_file.path().to_path_buf();
+		self.temp_files.push(temp_file);
+		self.new_files
+			.insert(key.to_owned(), (temp_file_path.clone(), path.as_ref().to_path_buf()));
+		Ok(temp_file_path)
+	}
+
+	pub fn new_dir<P: AsRef<Path>>(&mut self, path: P) -> Result<PathBuf, Error> {
+		let temp_dir = tempfile::tempdir()?;
+		let temp_dir_path = temp_dir.path().to_path_buf();
+		self.temp_dirs.push(temp_dir);
+		self.new_dirs
+			.insert(key.to_owned(), (temp_dir_path.clone(), path.as_ref().to_path_buf()));
+		Ok(temp_dir_path)
+	}
+
+	pub fn get_noted_file(&self, key: &str) -> Option<&Path> {
+		self.noted.get(key).map(|(tempfile_path, _)| &**tempfile_path)
+	}
+
+	pub fn get_new_file(&self, key: &str) -> Option<&Path> {
+		self.new_files.get(key).map(|(tempfile_path, _)| &**tempfile_path)
+	}
+
+	pub fn get_new_dir(&self, key: &str) -> Option<&Path> {
+		self.new_dirs.get(key).map(|(tempdir_path, _)| &**temdir_path)
+	}
+
+	pub fn commit(self) -> Result<(),Error> {
+		self.noted.into_values().for_each(|(temp, original)| {
+			std::fs::write(
+				original,
+				std::fs::read_to_string(temp)
+					.expect("The temp file exists as long as Self exists; qed"),
+			)
+			.expect("The original file exists; qed;")
+		});
+
+	}
+}
