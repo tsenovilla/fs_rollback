@@ -44,9 +44,6 @@ impl<'a> Rollback<'a> {
 	) -> Result<Vec<Backup>, (Error, Vec<Backup>)> {
 		let mut handles = Vec::with_capacity(self.noted.len());
 
-		// As NamedTempFile doesn't implement Clone, neither do Backup, hence we cannot return
-		// Backup from threads due to their creation involves data owned by the thread (original).
-		// Hence the only way to modify it concurrently is via Mutex
 		let mutex_backups = Arc::new(Mutex::new(backups));
 
 		// Keep an Arc count in the main thread as we need to send back backups at the end of the
