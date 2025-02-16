@@ -6,7 +6,7 @@ use fs_rollback::{
 	test_builder::{TestBuilder, MODIFIED_BUILDER_FILE_CONTENT, ORIGINAL_BUILDER_FILE_CONTENT},
 	Error,
 };
-use std::{io::ErrorKind, path::Path};
+use std::{fs::File, io::ErrorKind, path::Path};
 
 #[test]
 fn note_file_works() {
@@ -307,6 +307,17 @@ fn commit_fails_and_rollbacks_if_new_dir_cannot_be_committed() {
 		.with_new_dirs()
 		.with_read_only_dir()
 		.execute(|builder, rollback| {
+			// Note a file (cannot build it with builder cause the commit will fail because of this
+			// file as it's in a read_only dir). Rebind rollback to accomplish with existing_file
+			// lifetime
+			let mut rollback = rollback;
+			let tempdir = tempfile::tempdir().expect("Tempdir should be created");
+			let existing_file = tempdir.path().join("file.txt");
+
+			File::create(&existing_file).expect("File should be created; qed;");
+			std::fs::write(&existing_file, ORIGINAL_BUILDER_FILE_CONTENT)
+				.expect("File should be writable; qed;");
+			rollback.note_file(&existing_file).expect("File should be noted; qed;");
 			builder.new_files().iter().for_each(|file| assert!(!file.is_file()));
 			builder.new_dirs().iter().for_each(|dir| assert!(!dir.is_dir()));
 
@@ -322,6 +333,10 @@ fn commit_fails_and_rollbacks_if_new_dir_cannot_be_committed() {
 			}
 
 			// The fs wasn't affected
+			assert_eq!(
+				std::fs::read_to_string(&existing_file).expect("File should be readable; qed;"),
+				ORIGINAL_BUILDER_FILE_CONTENT
+			);
 			builder.new_files().iter().for_each(|file| assert!(!file.is_file()));
 			builder.new_dirs().iter().for_each(|dir| assert!(!dir.is_dir()));
 		});
