@@ -10,7 +10,6 @@ use crate::{
 
 use std::{
 	fs::File,
-	io::ErrorKind,
 	sync::{Arc, Mutex},
 };
 
