@@ -21,16 +21,13 @@ impl Rollback<'_> {
 		for dir in self.new_dirs.iter() {
 			let dir = dir.to_path_buf();
 			handles.push(std::thread::spawn(move || {
-				if let Err(err) = std::fs::remove_dir_all(dir) {
-					match Error::from(err) {
-						// This function objective is to delete all the new_dirs that have been
-						// created, if they don't exist, there's nothing to do.
-						Error::IO(err) if err.kind() == ErrorKind::NotFound => (),
-						// By construction, this dir has been created by the flow, so the flow can
-						// remove it
-						_ => unreachable!(),
-					}
-				}
+				// Don't need to handle this result:
+				// - If it works: ✅
+				// - If it fails cause the dir doesn't exist: ✅ as the funcion objective is to
+				//   delete it.
+				// - By construction there's not other possible error. If the dir is created by the
+				//   commit flow, the commit flow can also delete it.
+				let _ = std::fs::remove_dir_all(dir);
 			}));
 		}
 
@@ -45,16 +42,13 @@ impl Rollback<'_> {
 		for file in self.new_files.keys() {
 			let file = file.to_path_buf();
 			handles.push(std::thread::spawn(move || {
-				if let Err(err) = std::fs::remove_file(file) {
-					match Error::from(err) {
-						// This function objective is to delete all the new_files that have been
-						// created, if they don't exist, there's nothing to do.
-						Error::IO(err) if err.kind() == ErrorKind::NotFound => (),
-						// By construction, this file has been created by the flow, so the flow can
-						// remove it
-						_ => unreachable!(),
-					}
-				}
+				// Don't need to handle this result:
+				// - If it works: ✅
+				// - If it fails cause the file doesn't exist: ✅ as the funcion objective is to
+				//   delete it.
+				// - By construction there's not other possible error. If the file is created by the
+				//   commit flow, the commit flow can also delete it.
+				let _ = std::fs::remove_file(file);
 			}));
 		}
 
