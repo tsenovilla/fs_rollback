@@ -2,27 +2,25 @@
 
 mod backup;
 mod private_api;
-#[cfg(test)]
+#[cfg(all(test, not(feature = "integration-tests")))]
 mod tests;
 
 use crate::Error;
-use std::{
-	collections::HashMap,
-	path::{Path, PathBuf},
-};
+use std::{collections::HashMap, path::Path};
 use tempfile::NamedTempFile;
 
+/// # Description
+///
 /// This struct offers a whole rollback mechanism for file system transactions. All operations
-/// carried out under the umbrella of a Rollback instance won't affect the fyle system until
+/// carried out under the umbrella of a Rollback instance won't affect the file system until
 /// changes are committed.
 ///
-/// If something goes wrong while committing, every change that has been
-/// already made to the file system will be rolled-back.
+/// If something goes wrong while committing, every change that has been managed by the instance
+/// will be rolled-back, while all uncommitted changes will be discarded as soon as the instance
+/// goes out of scope.
 ///
-/// All uncommitted changes will be discarded as soon as the instance goes out of scope.
-///
-/// Rollback uses temporary files under the hood, where every desired change should be applied
-/// before committing.
+/// Rollback uses temporary files under the hood. Be sure to apply your changes to those files and
+/// then commit the Rollback instance to unleash the full power of Rollback.
 ///
 /// The struct currently supports:
 ///  
@@ -30,35 +28,36 @@ use tempfile::NamedTempFile;
 /// - Creation of new files.
 /// - Creation of new directories.
 ///
-/// # Terminology
+/// # Considerations
 ///
-/// - A noted file is an existing file that has been included in the Rollback, with an associated
-/// temporary file which is originally a copy of it. Upon commit, the temporary file will override
-/// the noted file.
+/// When a file is added to the rollback 'to be modified', or when a new file is added as
+/// 'to be created', a temporary file is created an remains open until the Rollback instance goes
+/// out of scope (a commit consumes the rollback). While it's unlikely that the limit of open files
+/// is reached, this is something worth to keep in mind.
+///
+/// Those temporary files are created using the tempfile crate, so the security considerations
+/// described [here](https://docs.rs/tempfile/latest/tempfile/) applies for this crate as well.
+
 #[derive(Debug)]
 pub struct Rollback<'a> {
-	// Keep the temp_files inside the rollback struct, so they live until the Rollback dissapears
-	temp_files: Vec<NamedTempFile>,
-	// Maps original file paths to the temporary file path
-	noted: HashMap<&'a Path, PathBuf>,
+	// Maps original file paths to the temporary file. As the temporary file is included in the
+	// map, it lives as long as the instance does.
+	noted: HashMap<&'a Path, NamedTempFile>,
 	// Maps original paths referring files that must be created with its corresponding temporary
-	// file
-	new_files: HashMap<&'a Path, PathBuf>,
-	// New dirs added
+	// file. As the temporary file is included in the map, it lives as long as the instance does.
+	new_files: HashMap<&'a Path, NamedTempFile>,
+	// New dirs added.
 	new_dirs: Vec<&'a Path>,
 }
 
-impl<'a> Rollback<'a> {
+impl Default for Rollback<'_> {
 	/// Creates a new, empty instance
-	pub fn new() -> Self {
-		Self {
-			temp_files: Vec::new(),
-			noted: HashMap::new(),
-			new_files: HashMap::new(),
-			new_dirs: Vec::new(),
-		}
+	fn default() -> Self {
+		Self { noted: HashMap::new(), new_files: HashMap::new(), new_dirs: Vec::new() }
 	}
+}
 
+impl<'a> Rollback<'a> {
 	/// Creates a new, empty instance with pre allocated memory for noted files, new files and new
 	/// directories.
 	pub fn with_capacity(
@@ -67,68 +66,114 @@ impl<'a> Rollback<'a> {
 		new_dirs_capacity: usize,
 	) -> Self {
 		Self {
-			temp_files: Vec::with_capacity(note_capacity),
 			noted: HashMap::with_capacity(note_capacity),
 			new_files: HashMap::with_capacity(new_files_capacity),
 			new_dirs: Vec::with_capacity(new_dirs_capacity),
 		}
 	}
 
-	/// Note an existing file.
+	/// Registers an existing file as 'to be modified', creating a temporary file that will be
+	/// committed to the existing file upon commit.
 	/// ## Errors:
+	/// - If the path is already noted.
+	/// - If the original path isn't a file.
 	/// - If the temporary file cannot be created.
 	/// - If the temporary file cannot be writen.
 	pub fn note_file(&mut self, original: &'a Path) -> Result<(), Error> {
+		if !original.is_file() {
+			return Err(Error::Descriptive(format!("{} isn't a file.", original.display())));
+		} else if self.noted.contains_key(original) {
+			return Err(Error::Descriptive(format!(
+				"{} is already noted by this rollback.",
+				original.display()
+			)));
+		}
+
+		// Committing the noted files cannot just persist the temp files as they live inside the
+		// Rollback instance, so moving them out isn't possible, but copying its content is.
+		// Hence, the tempfile can be created in the default temp dir.
 		let temp_file = NamedTempFile::new()?;
 		std::fs::copy(original, &temp_file)?;
-		self.noted.insert(original, temp_file.path().to_path_buf());
-		self.temp_files.push(temp_file);
+		self.noted.insert(original, temp_file);
 		Ok(())
 	}
 
-	/// Creates a temporary file that will be committed to a new file in the specified path.
-	/// The actual new file isn't created until the instance is committed, so trying to access that
-	/// file before commit would lead to errors.
+	/// Registers a valid file path as 'to be created', creating a temporary file that will be
+	/// committed to this new file. The actual new file isn't created until the Rollback instance
+	/// is committed, so trying to access it would lead to errors.
+	/// ## Considerations:
+	/// - If creating a file whose parent dir doesn't exist, consider adding that path to the
+	///   instance as well using the `new_dir` method. Otherwise, the rollback wouldn't be able to
+	///   commit the new file.
+	///
 	/// ## Errors:
 	/// - If the specified path already exists.
+	/// - If the path is already noted.
+	/// - If the path isn't a valid file path.
 	/// - If the temporary file cannot be created.
-	/// - If the temporary file cannot be writen.
 	pub fn new_file(&mut self, path: &'a Path) -> Result<(), Error> {
 		if path.exists() {
-			return Err(Error::Descriptive(format!("{:?} already exists", path)));
+			return Err(Error::Descriptive(format!("{} already exists.", path.display())));
+		} else if self.new_files.contains_key(path) {
+			return Err(Error::Descriptive(format!(
+				"{} is already noted by this rollback.",
+				path.display()
+			)));
+		} else if path.extension().is_none() {
+			return Err(Error::Descriptive(format!(
+				"{} is supposed to be a valid file path.",
+				path.display()
+			)));
 		}
-		let temp_file = NamedTempFile::new()?;
-		self.new_files.insert(path, temp_file.path().to_path_buf());
-		self.temp_files.push(temp_file);
+
+		// Committing the new files cannot just persist the temp files as they live inside the
+		// Rollback instance, so moving them out isn't possible, but copying its content is.
+		// Hence, the tempfile can be created in the default temp dir.
+		self.new_files.insert(path, NamedTempFile::new()?);
 		Ok(())
 	}
 
-	/// Keeps track of a directory that will be created in the specified path upon commit.
+	/// Registers a valid direcroty path as 'to be created'. The directory isn't created until the
+	/// Rollback instance is committed, so trying to access it would lead to errors.
 	/// ## Errors:
 	/// - If the specified path already exists.
+	/// - If the specified path is already noted.
+	/// - If the path isn't a valid directory path.
 	pub fn new_dir(&mut self, path: &'a Path) -> Result<(), Error> {
 		if path.exists() {
-			return Err(Error::Descriptive(format!("{:?} already exists", path)));
+			return Err(Error::Descriptive(format!("{} already exists.", path.display())));
+		} else if self.new_dirs.contains(&path) {
+			return Err(Error::Descriptive(format!(
+				"{} is already noted by this rollback.",
+				path.display()
+			)));
+		} else if path.as_os_str().is_empty() || path.extension().is_some() {
+			return Err(Error::Descriptive(format!(
+				"{} is supposed to be a valid directory path.",
+				path.display()
+			)))
 		}
 		self.new_dirs.push(path);
 		Ok(())
 	}
 
 	/// Get the temporary file associated to a noted file.
-	pub fn get_noted_file(&self, original: &Path) -> Option<&Path> {
-		self.noted.get(original).map(|temp_file| &**temp_file)
+	pub fn get_noted_file<P: AsRef<Path>>(&self, original: P) -> Option<&Path> {
+		self.noted.get(original.as_ref()).map(|temp_file| temp_file.path())
 	}
 
 	/// Get the temporary file associated to a new file.
-	pub fn get_new_file(&self, path: &Path) -> Option<&Path> {
-		self.new_files.get(path).map(|temp_file| &**temp_file)
+	pub fn get_new_file<P: AsRef<Path>>(&self, path: P) -> Option<&Path> {
+		self.new_files.get(path.as_ref()).map(|temp_file| temp_file.path())
 	}
 
-	/// Commit the changes and rollback everything in case of error.
-	/// Errors:
+	/// Consume the Rollback and commit the changes. If something goes wrong during the commit step,
+	/// everything is rolled-back, so the file system isn't affected.
+	///
+	/// ## Errors:
 	/// - If a noted file cannot be committed. This includes a wide range of possibilities: the
-	/// original file doesn't exist anymore, or the proccess doesn't have write permissions on
-	/// it,...
+	///   original file doesn't exist anymore, or the proccess doesn't have write permissions on
+	///   it,...
 	/// - If a new dir cannot be created.
 	/// - If a new file cannot be created.
 	pub fn commit(self) -> Result<(), Error> {
@@ -137,28 +182,22 @@ impl<'a> Rollback<'a> {
 		match self.commit_noted_files(backups) {
 			Ok(computed_backups) => backups = computed_backups,
 			Err((err, backups)) => {
-				backups.iter().for_each(|backup| backup.rollback());
+				backups.into_iter().for_each(|backup| backup.rollback());
 				return Err(err);
 			},
 		}
 
-		match self.commit_new_dirs() {
-			Err(err) => {
-				backups.iter().for_each(|backup| backup.rollback());
-				self.rollback_new_dirs();
-				return Err(err);
-			},
-			_ => (),
+		if let Err(err) = self.commit_new_dirs() {
+			backups.into_iter().for_each(|backup| backup.rollback());
+			self.rollback_new_dirs();
+			return Err(err);
 		}
 
-		match self.commit_new_files() {
-			Err(err) => {
-				backups.iter().for_each(|backup| backup.rollback());
-				self.rollback_new_files();
-				self.rollback_new_dirs();
-				return Err(err);
-			},
-			_ => (),
+		if let Err(err) = self.commit_new_files() {
+			backups.into_iter().for_each(|backup| backup.rollback());
+			self.rollback_new_files();
+			self.rollback_new_dirs();
+			return Err(err);
 		}
 
 		Ok(())

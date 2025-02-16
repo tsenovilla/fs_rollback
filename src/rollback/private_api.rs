@@ -1,41 +1,66 @@
 // SPDX-License-Identifier: GPL-3.0
 
+#[cfg(all(test, not(feature = "integration-tests")))]
+mod tests;
+
 use crate::{
 	rollback::{backup::Backup, Rollback},
 	Error,
 };
+
 use std::{
 	fs::File,
 	io::ErrorKind,
 	sync::{Arc, Mutex},
 };
 
-impl<'a> Rollback<'a> {
+impl Rollback<'_> {
 	pub(crate) fn rollback_new_dirs(&self) {
-		self.new_dirs.iter().for_each(|dir| match std::fs::remove_dir_all(dir) {
-			Err(err) => match Error::from(err) {
-				// This only means that this directory isn't created, it's OK, we don't need to
-				// remove it
-				Error::IO(err) if err.kind() != ErrorKind::NotFound => (),
-				// By construction, this dir has been created by the flow, so the flow can remove it
-				_ => unreachable!(),
-			},
-			_ => (),
-		});
+		let mut handles = Vec::with_capacity(self.new_dirs.len());
+
+		for dir in self.new_dirs.iter() {
+			let dir = dir.to_path_buf();
+			handles.push(std::thread::spawn(move || {
+				if let Err(err) = std::fs::remove_dir_all(dir) {
+					match Error::from(err) {
+						// This function objective is to delete all the new_dirs that have been
+						// created, if they don't exist, there's nothing to do.
+						Error::IO(err) if err.kind() == ErrorKind::NotFound => (),
+						// By construction, this dir has been created by the flow, so the flow can
+						// remove it
+						_ => unreachable!(),
+					}
+				}
+			}));
+		}
+
+		for handle in handles {
+			handle.join().expect("The threads cannot panic; qed;");
+		}
 	}
 
 	pub(crate) fn rollback_new_files(&self) {
-		self.new_files.keys().for_each(|file| match std::fs::remove_file(file) {
-			Err(err) => match Error::from(err) {
-				// This only means that this file isn't created yet, it's OK, don't need to remove
-				// it
-				Error::IO(err) if err.kind() != ErrorKind::NotFound => (),
-				// By construction, this file has been created by the flow, so the flow can remove
-				// it
-				_ => unreachable!(),
-			},
-			_ => (),
-		});
+		let mut handles = Vec::with_capacity(self.new_files.len());
+
+		for file in self.new_files.keys() {
+			let file = file.to_path_buf();
+			handles.push(std::thread::spawn(move || {
+				if let Err(err) = std::fs::remove_file(file) {
+					match Error::from(err) {
+						// This function objective is to delete all the new_files that have been
+						// created, if they don't exist, there's nothing to do.
+						Error::IO(err) if err.kind() == ErrorKind::NotFound => (),
+						// By construction, this file has been created by the flow, so the flow can
+						// remove it
+						_ => unreachable!(),
+					}
+				}
+			}));
+		}
+
+		for handle in handles {
+			handle.join().expect("The threads cannot panic; qed;");
+		}
 	}
 
 	pub(crate) fn commit_noted_files(
@@ -57,32 +82,29 @@ impl<'a> Rollback<'a> {
 		// wrong in any thread.
 		for (original, temporal) in self.noted.iter() {
 			let original = original.to_path_buf();
-			let temporal = temporal.clone();
+			let temporal = temporal.path().to_path_buf();
 			let mutex_backups = Arc::clone(&mutex_backups);
 			handles.push(std::thread::spawn(move || -> Result<(), Error> {
 				let backup = match Backup::new(&original) {
 					Ok(backup) => backup,
 					Err(err) => {
 						return Err(Error::Descriptive(format!(
-							"Committing the following file: {:?} failed with error: {}",
-							original, err
+							"Committing the following file: {} failed with error: {}",
+							original.display(),
+							err
 						)));
 					},
 				};
 
-				let mut backups = mutex_backups.lock().map_err(|err| {
-					Error::Descriptive(format!(
-						"Committing the following file: {:?} failed with error: {}",
-						original, err
-					))
-				})?;
+				let mut backups = mutex_backups.lock().expect("The threads cannot panic; qed;");
 
 				backups.push(backup);
 
 				if let Err(err) = std::fs::copy(temporal, &original) {
 					return Err(Error::Descriptive(format!(
-						"Committing the following file: {:?} failed with error: {}",
-						original, err
+						"Committing the following file: {} failed with error: {}",
+						original.display(),
+						err
 					)));
 				}
 				Ok(())
@@ -92,14 +114,14 @@ impl<'a> Rollback<'a> {
 		let mut result = Ok(());
 		for handle in handles {
 			let handle_result = handle.join().expect("The threads cannot panic; qed;");
-			if let Err(err) = handle_result {
-				result = Err(err);
+			if handle_result.is_err() {
+				result = handle_result;
 			}
 		}
 
 		let mut backups = main_thread_backups_copy
 			.lock()
-			.expect("At this point, this is the only reference to backups still alive; qed;");
+			.expect("At this point, this is the only reference to backups still alive and threads cannot panic; qed;");
 
 		// The only way to get backups back is to take its memory from the MutexGuard. It's fine, as
 		// there's not any remaining threads that can access this data
@@ -117,43 +139,48 @@ impl<'a> Rollback<'a> {
 				match std::fs::create_dir_all(&dir) {
 					Ok(_) => Ok(()),
 					Err(err) => Err(Error::Descriptive(format!(
-						"Committing the following dir: {:?} failed with error: {}",
-						dir, err
+						"Committing the following dir: {} failed with error: {}",
+						dir.display(),
+						err
 					))),
 				}
 			}));
 		}
 
+		let mut result = Ok(());
 		for handle in handles {
-			let result = handle.join().expect("The threads cannot panic; qed;");
-			if result.is_err() {
-				return result;
+			let handle_result = handle.join().expect("The threads cannot panic; qed");
+			if handle_result.is_err() {
+				result = handle_result;
 			}
 		}
-		Ok(())
+
+		result
 	}
 
 	pub(crate) fn commit_new_files(&self) -> Result<(), Error> {
 		let mut handles = Vec::with_capacity(self.new_files.len());
 		for (path, temporal) in self.new_files.iter() {
 			let path = path.to_path_buf();
-			let temporal = temporal.clone();
+			let temporal = temporal.path().to_path_buf();
 
 			handles.push(std::thread::spawn(move || -> Result<(), Error> {
 				match File::create(&path) {
 					Ok(_) => (),
 					Err(err) => {
 						return Err(Error::Descriptive(format!(
-							"Committing the following file: {:?} failed with error: {}",
-							path, err
+							"Committing the following file: {} failed with error: {}",
+							path.display(),
+							err
 						)));
 					},
 				}
 
 				if let Err(err) = std::fs::copy(temporal, &path) {
 					return Err(Error::Descriptive(format!(
-						"Committing the following file: {:?} failed with error: {}",
-						path, err
+						"Committing the following file: {} failed with error: {}",
+						path.display(),
+						err
 					)));
 				}
 
@@ -161,13 +188,14 @@ impl<'a> Rollback<'a> {
 			}));
 		}
 
+		let mut result = Ok(());
 		for handle in handles {
-			let result = handle.join().expect("The threads cannot panic; qed");
-
-			if result.is_err() {
-				return result;
+			let handle_result = handle.join().expect("The threads cannot panic; qed");
+			if handle_result.is_err() {
+				result = handle_result;
 			}
 		}
-		Ok(())
+
+		result
 	}
 }

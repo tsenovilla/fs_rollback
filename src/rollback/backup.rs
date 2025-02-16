@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "integration-tests")))]
 mod tests;
 
 use crate::Error;
@@ -15,16 +15,18 @@ pub(crate) struct Backup {
 
 impl Backup {
 	pub(crate) fn new(original: &Path) -> Result<Self, Error> {
-		let backup = NamedTempFile::new()?;
+		let prefixed_path = rustilities::paths::prefix_with_current_dir(original);
+		let original_parent_dir =
+			prefixed_path.parent().expect("The path is a file and is prefixed; qed;");
+		// Create the backup in the same directory as the original, so we can persist the backup
+		let backup = NamedTempFile::new_in(original_parent_dir)?;
 		std::fs::copy(original, &backup)?;
 		Ok(Self { backup, original: original.to_path_buf() })
 	}
 
-	pub(crate) fn rollback(&self) {
-		std::fs::copy(
-			&self.backup,
-			&self.original
-		)
-		.expect("Generated backups guarantee that both original and backup exist and are writable; qed;");
+	pub(crate) fn rollback(self) {
+		self.backup
+            .persist(&self.original)
+            .expect("Generated backups guarantee that both original and backup exist in the same file system, so persisting the tempfile should be possible; qed;");
 	}
 }
