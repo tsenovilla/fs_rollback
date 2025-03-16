@@ -255,7 +255,6 @@ fn commit_new_files_fails_if_the_temp_file_cannot_be_copied_to_the_new_file() {
 
 		match rollback.commit_new_files() {
 			Err(Error::Descriptive(msg)) => {
-				println!("{}", msg);
 				// The temporary file was deleted for the first new file so it couldn't be
 				// created
 				assert!(msg.contains(&format!(

@@ -64,7 +64,6 @@ fn note_file_fails_if_it_cannot_create_temp_file() {
 			std::env::set_var("TMPDIR", original_tmpdir.clone());
 			std::env::set_var("TEMP", original_temp_dir.clone());
 
-			println!("{:?}", result);
 			match result {
 				Err(Error::IO(err)) => assert_eq!(err.kind(), ErrorKind::PermissionDenied),
 				_ => panic!("Unexpected error"),
