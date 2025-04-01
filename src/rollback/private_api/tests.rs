@@ -4,6 +4,7 @@ use super::*;
 use crate::test_builder::{
 	TestBuilder, MODIFIED_BUILDER_FILE_CONTENT, ORIGINAL_BUILDER_FILE_CONTENT,
 };
+use std::path::Path;
 
 #[test]
 fn rollback_new_dirs_works() {
@@ -200,6 +201,33 @@ fn commit_new_dirs_fails_if_new_dirs_cannot_be_created() {
 }
 
 #[test]
+fn commit_new_dirs_fails_if_same_dir_noted_several_times() {
+	TestBuilder::new(None).with_new_dirs().execute(|builder, mut rollback| {
+		let path = builder.new_dirs()[0];
+
+		let original_cwd = std::env::current_dir().expect("The current dir is the crate dir; qed;");
+
+		std::env::set_current_dir(builder.get_temp_dir_path())
+			.expect("The tempdir should be able to be current_dir; qed;");
+
+		let refactored_path =
+			Path::new(path.file_name().expect("The path is a dir, so file_name exists; qed;"));
+
+		assert!(rollback.new_dir(&refactored_path).is_ok());
+
+		let result = rollback.commit_new_dirs();
+
+		std::env::set_current_dir(original_cwd)
+			.expect("The original_cwd should be able to be current_dir; qed;");
+
+		assert!(matches!(
+			result,
+			Err(Error::RepeatedNewDir(msg)) if msg.contains(refactored_path.to_str().unwrap())
+		));
+	});
+}
+
+#[test]
 fn commit_new_files_works() {
 	TestBuilder::new(None).with_new_files().execute(|builder, rollback| {
 		builder.new_files().iter().for_each(|file_path| assert!(!file_path.is_file()));
@@ -213,6 +241,33 @@ fn commit_new_files_works() {
 				ORIGINAL_BUILDER_FILE_CONTENT
 			);
 		});
+	});
+}
+
+#[test]
+fn commit_new_files_fails_if_same_file_noted_several_times() {
+	TestBuilder::new(None).with_new_files().execute(|builder, mut rollback| {
+		let path = builder.new_files()[0];
+
+		let original_cwd = std::env::current_dir().expect("The current dir is the crate dir; qed;");
+
+		std::env::set_current_dir(builder.get_temp_dir_path())
+			.expect("The tempdir should be able to be current_dir; qed;");
+
+		let refactored_path =
+			Path::new(path.file_name().expect("The path is a file, so file_name exists; qed;"));
+
+		assert!(rollback.new_file(&refactored_path).is_ok());
+
+		let result = rollback.commit_new_files();
+
+		std::env::set_current_dir(original_cwd)
+			.expect("The original_cwd should be able to be current_dir; qed;");
+
+		assert!(matches!(
+			result,
+			Err(Error::RepeatedNewFile(msg)) if msg.contains(refactored_path.to_str().unwrap())
+		));
 	});
 }
 
@@ -266,8 +321,8 @@ fn commit_new_files_fails_if_the_temp_file_cannot_be_copied_to_the_new_file() {
 			_ => panic!("Unexpected error"),
 		}
 
-		// The rest of new files were correctly committed, while the first one is created but
-		// without content
+		// The while the first file is created without content, other files may have been correctly
+		// created (maybe not all of them)
 		builder.new_files().iter().enumerate().for_each(|(index, file_path)| {
 			if index == 0 {
 				assert!(file_path.is_file());
@@ -277,12 +332,13 @@ fn commit_new_files_fails_if_the_temp_file_cannot_be_copied_to_the_new_file() {
 					""
 				);
 			} else {
-				assert!(file_path.is_file());
-				assert_eq!(
-					std::fs::read_to_string(file_path)
-						.expect("The file exists and is readable; qed;"),
-					ORIGINAL_BUILDER_FILE_CONTENT
-				);
+				if file_path.is_file() {
+					assert_eq!(
+						std::fs::read_to_string(file_path)
+							.expect("The file exists and is readable; qed;"),
+						ORIGINAL_BUILDER_FILE_CONTENT
+					);
+				}
 			}
 		});
 	});

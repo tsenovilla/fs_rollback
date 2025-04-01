@@ -30,13 +30,22 @@ use tempfile::NamedTempFile;
 ///
 /// # Considerations
 ///
-/// When a file is added to the rollback 'to be modified', or when a new file is added as
-/// 'to be created', a temporary file is created an remains open until the Rollback instance goes
-/// out of scope (a commit consumes the rollback). While it's unlikely that the limit of open files
-/// is reached, this is something worth to keep in mind.
+/// - When a file is added to the rollback 'to be modified', or when a new file is added as 'to be
+///   created', a temporary file is created an remains open until the Rollback instance goes out of
+///   scope (a commit consumes the rollback). While it's unlikely that the limit of open files is
+///   reached, this is something worth to keep in mind.
 ///
-/// Those temporary files are created using the tempfile crate, so the security considerations
-/// described [here](https://docs.rs/tempfile/latest/tempfile/) applies for this crate as well.
+///   Those temporary files are created using the tempfile crate, so the security considerations
+///   described [here](https://docs.rs/tempfile/latest/tempfile/) applies for this crate as well.
+///
+/// - The [`Rollback`] struct is able to detect if two different paths point to the same file when
+///   its added to the rollback to be modified. However, there's not a way to detect if two paths
+///   will resolve to the same new file or new directory, so it will accept both.
+///
+///   In the first case, the rollback simply won't accept the noted file the second time. In the
+///   second case,   however, the rollback will accept the path and **fail** when it's committed, to
+///   avoid a race   condition. Note that this mean that all modifications will be rolled-back, so
+///   paying attention   to new files/new dirs paths is crutial.
 
 #[derive(Debug)]
 pub struct Rollback<'a> {
@@ -75,7 +84,8 @@ impl<'a> Rollback<'a> {
 	/// Registers an existing file as 'to be modified', creating a temporary file that will be
 	/// committed to the existing file upon commit.
 	/// ## Errors:
-	/// - If the path is already noted.
+	/// - If the file is already noted, either using exactly the same [`Path`] or a different
+	///   representation of it.
 	/// - If the original path isn't a file.
 	/// - If the temporary file cannot be created.
 	/// - If the temporary file cannot be writen.
