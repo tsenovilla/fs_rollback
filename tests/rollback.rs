@@ -31,7 +31,7 @@ fn note_file_fails_if_provided_path_isnt_file() {
 		let some_path = "some/path";
 
 		match rollback.note_file(some_path.as_ref()) {
-			Err(Error::Descriptive(msg)) => assert_eq!(msg, format!("{} isn't a file.", some_path)),
+			Err(Error::NotAFile(item)) => assert_eq!(item, format!("{}", some_path)),
 			_ => panic!("Unexpected error"),
 		}
 	});
@@ -42,8 +42,7 @@ fn note_file_fails_if_provided_path_is_already_noted() {
 	TestBuilder::new(Some(1)).with_noted_files().execute(|builder, mut rollback| {
 		let path = builder.existing_files()[0];
 		match rollback.note_file(path) {
-			Err(Error::Descriptive(msg)) =>
-				assert_eq!(msg, format!("{} is already noted by this rollback.", path.display())),
+			Err(Error::AlreadyNoted(item)) => assert_eq!(item, format!("{}", path.display())),
 			_ => panic!("Unexpected error"),
 		}
 	});
@@ -69,8 +68,8 @@ fn note_file_fails_if_provided_path_is_already_noted_under_different_path_repres
 
 		assert!(matches!(
 			result,
-			Err(Error::Descriptive(msg))
-			if msg == format!("{} is already noted by this rollback.", refactored_path.display())
+			Err(Error::AlreadyNoted(item))
+			if item == format!("{}", refactored_path.display())
 		));
 	});
 }
@@ -121,8 +120,8 @@ fn new_file_fails_if_path_already_exists() {
 	TestBuilder::new(Some(1)).execute(|builder, mut rollback| {
 		let path = builder.existing_files()[0];
 		match rollback.new_file(path) {
-			Err(Error::Descriptive(msg)) =>
-				assert_eq!(format!("{} already exists.", path.display()), msg),
+			Err(Error::NewItemAlreadyExists(item)) =>
+				assert_eq!(format!("{}", path.display()), item),
 			_ => panic!("Unexpected error"),
 		}
 	});
@@ -133,8 +132,7 @@ fn new_file_fails_if_path_already_noted() {
 	TestBuilder::new(Some(1)).with_new_files().execute(|builder, mut rollback| {
 		let path = builder.new_files()[0];
 		match rollback.new_file(path) {
-			Err(Error::Descriptive(msg)) =>
-				assert_eq!(format!("{} is already noted by this rollback.", path.display()), msg),
+			Err(Error::AlreadyNoted(item)) => assert_eq!(format!("{}", path.display()), item),
 			_ => panic!("Unexpected error"),
 		}
 	});
@@ -145,8 +143,7 @@ fn new_file_fails_if_path_cannot_be_a_file() {
 	TestBuilder::new(Some(1)).execute(|builder, mut rollback| {
 		let path = builder.new_dirs()[0];
 		match rollback.new_file(path) {
-			Err(Error::Descriptive(msg)) =>
-				assert_eq!(format!("{} is supposed to be a valid file path.", path.display()), msg),
+			Err(Error::NotAFile(item)) => assert_eq!(format!("{}", path.display()), item),
 			_ => panic!("Unexpected error"),
 		}
 	});
@@ -188,8 +185,8 @@ fn new_dir_fails_if_path_already_exists() {
 		let path = builder.new_dirs()[0];
 		std::fs::create_dir_all(path).expect("The directory should be created; qed;");
 		match rollback.new_dir(path) {
-			Err(Error::Descriptive(msg)) =>
-				assert_eq!(format!("{} already exists.", path.display()), msg),
+			Err(Error::NewItemAlreadyExists(item)) =>
+				assert_eq!(format!("{}", path.display()), item),
 			_ => panic!("Unexpected error"),
 		}
 	});
@@ -200,8 +197,7 @@ fn new_dir_fails_if_path_already_noted() {
 	TestBuilder::new(Some(1)).with_new_dirs().execute(|builder, mut rollback| {
 		let path = builder.new_dirs()[0];
 		match rollback.new_dir(path) {
-			Err(Error::Descriptive(msg)) =>
-				assert_eq!(format!("{} is already noted by this rollback.", path.display()), msg),
+			Err(Error::AlreadyNoted(item)) => assert_eq!(format!("{}", path.display()), item),
 			_ => panic!("Unexpected error"),
 		}
 	});
@@ -212,10 +208,7 @@ fn new_dir_fails_if_path_cannot_be_a_dir() {
 	TestBuilder::new(Some(1)).execute(|builder, mut rollback| {
 		let path = builder.new_files()[0];
 		match rollback.new_dir(path) {
-			Err(Error::Descriptive(msg)) => assert_eq!(
-				format!("{} is supposed to be a valid directory path.", path.display()),
-				msg
-			),
+			Err(Error::NotADir(item)) => assert_eq!(format!("{}", path.display()), item),
 			_ => panic!("Unexpected error"),
 		}
 	});
@@ -300,12 +293,9 @@ fn commit_fails_and_rollbacks_if_noted_file_cannot_be_committed() {
 			std::fs::remove_file(&removed_file).expect("This should be possible; qed;");
 
 			match rollback.commit() {
-				Err(Error::Descriptive(msg)) => {
-					assert!(msg.contains(&format!(
-						"Committing the following file: {}",
-						removed_file.display()
-					)));
-					assert!(msg.contains("No such file or directory"));
+				Err(Error::Commit(item, err)) => {
+					assert_eq!(item, format!("{}", removed_file.display()));
+					assert!(err.contains("No such file or directory"));
 				},
 				_ => panic!("Unexpected error"),
 			}
@@ -347,12 +337,11 @@ fn commit_fails_and_rollbacks_if_new_dir_cannot_be_committed() {
 			builder.new_dirs().iter().for_each(|dir| assert!(!dir.is_dir()));
 
 			match rollback.commit() {
-				Err(Error::Descriptive(msg)) => {
+				Err(Error::Commit(_, err)) => {
 					// No permissions in temp_dir => failure committing the dirs; Cannot ensure
 					// which one comes in the msg cause this runs concurrently and all of them
 					// failed
-					assert!(msg.contains("Committing the following dir"));
-					assert!(msg.contains("Permission denied"));
+					assert!(err.contains("Permission denied"));
 				},
 				_ => panic!("Unexpected error"),
 			}
@@ -396,12 +385,9 @@ fn commit_fails_and_rollbacks_if_new_file_cannot_be_committed() {
 			.expect("This should be possible; qed;");
 
 			match rollback.commit() {
-				Err(Error::Descriptive(msg)) => {
-					assert!(msg.contains(&format!(
-						"Committing the following file: {}",
-						uncommitted_file.display()
-					)));
-					assert!(msg.contains("No such file or directory"));
+				Err(Error::Commit(item, err)) => {
+					assert_eq!(item, format!("{}", uncommitted_file.display()));
+					assert!(err.contains("No such file or directory"));
 				},
 				_ => panic!("Unexpected error"),
 			}

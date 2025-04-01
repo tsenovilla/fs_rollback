@@ -78,11 +78,10 @@ impl Rollback<'_> {
 				let backup = match Backup::new(&original) {
 					Ok(backup) => backup,
 					Err(err) => {
-						return Err(Error::Descriptive(format!(
-							"Committing the following file: {} failed with error: {}",
-							original.display(),
-							err
-						)));
+						return Err(Error::Commit(
+							format!("{}", original.display()),
+							format!("{}", err),
+						));
 					},
 				};
 
@@ -91,11 +90,10 @@ impl Rollback<'_> {
 				backups.push(backup);
 
 				if let Err(err) = std::fs::copy(temporal, &original) {
-					return Err(Error::Descriptive(format!(
-						"Committing the following file: {} failed with error: {}",
-						original.display(),
-						err
-					)));
+					return Err(Error::Commit(
+						format!("{}", original.display()),
+						format!("{}", err),
+					));
 				}
 				Ok(())
 			}));
@@ -122,6 +120,9 @@ impl Rollback<'_> {
 	}
 
 	pub(crate) fn commit_new_dirs(&self) -> Result<(), Error> {
+		// Concurrency not possible cause two paths can be noted pointing to the same new dir.
+		// The only way to detect this is to check if the path already exists, for what concurrency
+		// may introduce race conditions.
 		for dir in self.new_dirs.iter() {
 			if dir.exists() {
 				return Err(Error::RepeatedNewDir(format!("{}", dir.display())));
@@ -130,11 +131,7 @@ impl Rollback<'_> {
 			match std::fs::create_dir_all(dir) {
 				Ok(_) => (),
 				Err(err) => {
-					return Err(Error::Descriptive(format!(
-						"Committing the following dir: {} failed with error: {}",
-						dir.display(),
-						err
-					)));
+					return Err(Error::Commit(format!("{}", dir.display()), format!("{}", err)));
 				},
 			}
 		}
@@ -143,6 +140,9 @@ impl Rollback<'_> {
 	}
 
 	pub(crate) fn commit_new_files(&self) -> Result<(), Error> {
+		// Concurrency not possible cause two paths can be noted pointing to the same new file.
+		// The only way to detect this is to check if the path already exists, for what concurrency
+		// may introduce race conditions.
 		for (path, temporal) in self.new_files.iter() {
 			if path.exists() {
 				return Err(Error::RepeatedNewFile(format!("{}", path.display())));
@@ -151,20 +151,12 @@ impl Rollback<'_> {
 			match File::create(path) {
 				Ok(_) => (),
 				Err(err) => {
-					return Err(Error::Descriptive(format!(
-						"Committing the following file: {} failed with error: {}",
-						path.display(),
-						err
-					)));
+					return Err(Error::Commit(format!("{}", path.display()), format!("{}", err)));
 				},
 			}
 
 			if let Err(err) = std::fs::copy(temporal.path(), path) {
-				return Err(Error::Descriptive(format!(
-					"Committing the following file: {} failed with error: {}",
-					path.display(),
-					err
-				)));
+				return Err(Error::Commit(format!("{}", path.display()), format!("{}", err)));
 			}
 		}
 

@@ -86,14 +86,11 @@ fn commit_noted_files_fails_if_a_backup_cannot_be_created() {
 
 		// The error is as expected
 		match error {
-			Error::Descriptive(msg) => {
+			Error::Commit(item, err) => {
 				// It says the original file doesn't exist => the backup wasn't created for that
 				// file
-				assert!(msg.contains(&format!(
-					"Committing the following file: {}",
-					builder.existing_files()[0].display()
-				)));
-				assert!(msg.contains("No such file or directory"));
+				assert!(item == format!("{}", builder.existing_files()[0].display()));
+				assert!(err.contains("No such file or directory"));
 			},
 			_ => panic!("Unexpected error"),
 		}
@@ -134,13 +131,10 @@ fn commit_noted_files_fails_if_a_noted_file_cannot_be_committed() {
 
 		// The error is as expected
 		match error {
-			Error::Descriptive(msg) => {
+			Error::Commit(item, err) => {
 				// The original file couldn't be committed
-				assert!(msg.contains(&format!(
-					"Committing the following file: {}",
-					builder.existing_files()[0].display()
-				)));
-				assert!(msg.contains("No such file or directory"));
+				assert!(item == format!("{}", builder.existing_files()[0].display()));
+				assert!(err.contains("No such file or directory"));
 			},
 			_ => panic!("Unexpected error"),
 		}
@@ -185,12 +179,11 @@ fn commit_new_dirs_fails_if_new_dirs_cannot_be_created() {
 			builder.new_dirs().iter().for_each(|dir_path| assert!(!dir_path.is_dir()));
 
 			match rollback.commit_new_dirs() {
-				Err(Error::Descriptive(msg)) => {
+				Err(Error::Commit(_, err)) => {
 					// No permissions in temp_dir => failure committing the dirs; Cannot ensure
 					// which one comes in the msg cause this runs concurrently and all of them
 					// failed
-					assert!(msg.contains("Committing the following dir"));
-					assert!(msg.contains("Permission denied"));
+					assert!(err.contains("Permission denied"));
 				},
 				_ => panic!("Unexpected error"),
 			}
@@ -280,12 +273,11 @@ fn commit_new_files_fails_if_new_files_cannot_be_created() {
 			builder.new_files().iter().for_each(|file_path| assert!(!file_path.is_file()));
 
 			match rollback.commit_new_files() {
-				Err(Error::Descriptive(msg)) => {
+				Err(Error::Commit(_, err)) => {
 					// No permissions in temp_dir => failure committing the files; cannot ensure
 					// which one comes in the message as this runs concurrently and all of them
 					// failed
-					assert!(msg.contains("Committing the following file"));
-					assert!(msg.contains("Permission denied"));
+					assert!(err.contains("Permission denied"));
 
 					// Files weren't created
 					builder.new_files().iter().for_each(|file_path| assert!(!file_path.is_file()));
@@ -309,14 +301,11 @@ fn commit_new_files_fails_if_the_temp_file_cannot_be_copied_to_the_new_file() {
 		.expect("The temporary file can be deleted; qed;");
 
 		match rollback.commit_new_files() {
-			Err(Error::Descriptive(msg)) => {
+			Err(Error::Commit(item, err)) => {
 				// The temporary file was deleted for the first new file so it couldn't be
 				// created
-				assert!(msg.contains(&format!(
-					"Committing the following file: {}",
-					builder.new_files()[0].display()
-				)));
-				assert!(msg.contains("No such file or directory"));
+				assert!(item == format!("{}", builder.new_files()[0].display()));
+				assert!(err.contains("No such file or directory"));
 			},
 			_ => panic!("Unexpected error"),
 		}

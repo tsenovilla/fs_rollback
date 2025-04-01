@@ -91,16 +91,13 @@ impl<'a> Rollback<'a> {
 	/// - If the temporary file cannot be writen.
 	pub fn note_file(&mut self, original: &'a Path) -> Result<(), Error> {
 		if !original.is_file() {
-			return Err(Error::Descriptive(format!("{} isn't a file.", original.display())));
+			return Err(Error::NotAFile(format!("{}", original.display())));
 		} else if self
 			.noted
 			.keys()
 			.any(|path| same_file::is_same_file(original, path).unwrap_or(false))
 		{
-			return Err(Error::Descriptive(format!(
-				"{} is already noted by this rollback.",
-				original.display()
-			)));
+			return Err(Error::AlreadyNoted(format!("{}", original.display())));
 		}
 
 		// Committing the noted files cannot just persist the temp files as they live inside the
@@ -127,17 +124,11 @@ impl<'a> Rollback<'a> {
 	/// - If the temporary file cannot be created.
 	pub fn new_file(&mut self, path: &'a Path) -> Result<(), Error> {
 		if path.exists() {
-			return Err(Error::Descriptive(format!("{} already exists.", path.display())));
+			return Err(Error::NewItemAlreadyExists(format!("{}", path.display())));
 		} else if self.new_files.contains_key(path) {
-			return Err(Error::Descriptive(format!(
-				"{} is already noted by this rollback.",
-				path.display()
-			)));
+			return Err(Error::AlreadyNoted(format!("{}", path.display())));
 		} else if path.extension().is_none() {
-			return Err(Error::Descriptive(format!(
-				"{} is supposed to be a valid file path.",
-				path.display()
-			)));
+			return Err(Error::NotAFile(format!("{}", path.display())));
 		}
 
 		// Committing the new files cannot just persist the temp files as they live inside the
@@ -155,17 +146,11 @@ impl<'a> Rollback<'a> {
 	/// - If the path isn't a valid directory path.
 	pub fn new_dir(&mut self, path: &'a Path) -> Result<(), Error> {
 		if path.exists() {
-			return Err(Error::Descriptive(format!("{} already exists.", path.display())));
+			return Err(Error::NewItemAlreadyExists(format!("{}", path.display())));
 		} else if self.new_dirs.contains(&path) {
-			return Err(Error::Descriptive(format!(
-				"{} is already noted by this rollback.",
-				path.display()
-			)));
+			return Err(Error::AlreadyNoted(format!("{}", path.display())));
 		} else if path.as_os_str().is_empty() || path.extension().is_some() {
-			return Err(Error::Descriptive(format!(
-				"{} is supposed to be a valid directory path.",
-				path.display()
-			)))
+			return Err(Error::NotADir(format!("{}", path.display())))
 		}
 		self.new_dirs.push(path);
 		Ok(())

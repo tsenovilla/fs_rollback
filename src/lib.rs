@@ -105,12 +105,12 @@
 //!
 //! // If everything went well, we can commit our changes to the fs
 //! match rollback.commit(){
-//!     Err(Error::Descriptive(msg)) => {
+//!     Err(Error::Commit(item, err)) => {
 //!         // The error specifies the uncommited file
-//!         assert!(msg.contains(&format!("Committing the following file: {}",new_file1.display())));
+//!         assert_eq!(item, format!("{}",new_file1.display()));
 //!         // As the error's originated by a not existing directory, the message also explains
 //!         // that
-//!         assert!(msg.contains("No such file or directory"));
+//!         assert!(err.contains("No such file or directory"));
 //!     },
 //!     _ => panic!("Unexpected error")
 //! }
