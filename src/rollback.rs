@@ -43,9 +43,9 @@ use tempfile::NamedTempFile;
 ///   will resolve to the same new file or new directory, so it will accept both.
 ///
 ///   In the first case, the rollback simply won't accept the noted file the second time. In the
-///   second case,   however, the rollback will accept the path and **fail** when it's committed, to
-///   avoid a race   condition. Note that this mean that all modifications will be rolled-back, so
-///   paying attention   to new files/new dirs paths is crutial.
+///   second case, however, the rollback will accept the path and **fail** when it's committed, to
+///   avoid a race condition. Note that this mean that all modifications will be rolled-back, so
+///   paying attention to new files/new dirs paths is crutial.
 
 #[derive(Debug)]
 pub struct Rollback<'a> {

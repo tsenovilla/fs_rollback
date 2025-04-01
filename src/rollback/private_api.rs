@@ -127,7 +127,7 @@ impl Rollback<'_> {
 				return Err(Error::RepeatedNewDir(format!("{}", dir.display())));
 			}
 
-			match std::fs::create_dir_all(&dir) {
+			match std::fs::create_dir_all(dir) {
 				Ok(_) => (),
 				Err(err) => {
 					return Err(Error::Descriptive(format!(
@@ -148,7 +148,7 @@ impl Rollback<'_> {
 				return Err(Error::RepeatedNewFile(format!("{}", path.display())));
 			}
 
-			match File::create(&path) {
+			match File::create(path) {
 				Ok(_) => (),
 				Err(err) => {
 					return Err(Error::Descriptive(format!(
@@ -159,7 +159,7 @@ impl Rollback<'_> {
 				},
 			}
 
-			if let Err(err) = std::fs::copy(temporal.path(), &path) {
+			if let Err(err) = std::fs::copy(temporal.path(), path) {
 				return Err(Error::Descriptive(format!(
 					"Committing the following file: {} failed with error: {}",
 					path.display(),
