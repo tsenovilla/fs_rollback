@@ -82,7 +82,11 @@ impl<'a> Rollback<'a> {
 	pub fn note_file(&mut self, original: &'a Path) -> Result<(), Error> {
 		if !original.is_file() {
 			return Err(Error::Descriptive(format!("{} isn't a file.", original.display())));
-		} else if self.noted.contains_key(original) {
+		} else if self
+			.noted
+			.keys()
+			.any(|path| same_file::is_same_file(original, path).unwrap_or(false))
+		{
 			return Err(Error::Descriptive(format!(
 				"{} is already noted by this rollback.",
 				original.display()

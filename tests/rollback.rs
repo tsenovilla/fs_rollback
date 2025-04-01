@@ -50,6 +50,32 @@ fn note_file_fails_if_provided_path_is_already_noted() {
 }
 
 #[test]
+fn note_file_fails_if_provided_path_is_already_noted_under_different_path_representation() {
+	TestBuilder::new(Some(1)).with_noted_files().execute(|builder, mut rollback| {
+		let path = builder.existing_files()[0];
+
+		let original_cwd = std::env::current_dir().expect("The current dir is the crate dir; qed;");
+
+		std::env::set_current_dir(builder.get_temp_dir_path())
+			.expect("The tempdir should be able to be current_dir; qed;");
+
+		let refactored_path =
+			Path::new(path.file_name().expect("The path is a file, so file_name exists; qed;"));
+
+		let result = rollback.note_file(&refactored_path);
+
+		std::env::set_current_dir(original_cwd)
+			.expect("The original_cwd should be able to be current_dir; qed;");
+
+		assert!(matches!(
+			result,
+			Err(Error::Descriptive(msg))
+			if msg == format!("{} is already noted by this rollback.", refactored_path.display())
+		));
+	});
+}
+
+#[test]
 fn note_file_fails_if_it_cannot_create_temp_file() {
 	// Save original tempdir locations as this test will modify them.
 	let original_temp_dir = std::env::var("TEMP").unwrap_or_default(); // Windows

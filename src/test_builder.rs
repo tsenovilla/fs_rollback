@@ -73,6 +73,10 @@ impl TestBuilder {
 		}
 	}
 
+	pub fn get_temp_dir_path(&self) -> &Path {
+		self.tempdir.path()
+	}
+
 	pub fn existing_files(&self) -> Vec<&Path> {
 		self.existing_files.iter().map(|file| file.path()).collect()
 	}
