@@ -158,7 +158,17 @@ impl<'a> Rollback<'a> {
 
 	/// Get the temporary file associated to a noted file.
 	pub fn get_noted_file<P: AsRef<Path>>(&self, original: P) -> Option<&Path> {
-		self.noted.get(original.as_ref()).map(|temp_file| temp_file.path())
+		self.noted.get(original.as_ref()).map_or_else(
+			|| {
+				self.noted.keys().find_map(|path| {
+					same_file::is_same_file(path, original.as_ref())
+						.ok()
+						.filter(|&same| same)
+						.and_then(|_| self.noted.get(path).map(|temp_file| temp_file.path()))
+				})
+			},
+			|temp_file| Some(temp_file.path()),
+		)
 	}
 
 	/// Get the temporary file associated to a new file.

@@ -223,6 +223,30 @@ fn get_noted_file_works() {
 }
 
 #[test]
+fn get_noted_file_works_with_different_path_representation() {
+	TestBuilder::new(Some(1)).with_noted_files().execute(|builder, rollback| {
+		let path = builder.existing_files()[0];
+
+		let original_cwd = std::env::current_dir().expect("The current dir is the crate dir; qed;");
+
+		std::env::set_current_dir(builder.get_temp_dir_path())
+			.expect("The tempdir should be able to be current_dir; qed;");
+
+		let refactored_path =
+			Path::new(path.file_name().expect("The path is a file, so file_name exists; qed;"));
+
+		let noted_file = rollback.get_noted_file(path);
+		let noted_file_refactored_path = rollback.get_noted_file(&refactored_path);
+
+		std::env::set_current_dir(original_cwd)
+			.expect("The original_cwd should be able to be current_dir; qed;");
+
+		assert!(noted_file_refactored_path.is_some());
+		assert_eq!(noted_file, noted_file_refactored_path);
+	});
+}
+
+#[test]
 fn get_new_file_works() {
 	TestBuilder::new(Some(1)).with_new_files().execute(|builder, rollback| {
 		assert!(rollback.get_new_file(builder.new_files()[0]).is_some());
