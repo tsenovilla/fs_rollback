@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0
 
 mod backup;
-mod private_api;
+mod ext;
+
 #[cfg(all(test, not(feature = "integration-tests")))]
 mod tests;
 
